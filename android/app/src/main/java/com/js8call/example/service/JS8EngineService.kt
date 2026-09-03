@@ -1630,6 +1630,46 @@ class JS8EngineService : Service() {
             putExtra(EXTRA_STATE, state)
         }
         LocalBroadcastManager.getInstance(this).sendBroadcast(intent)
+
+        // The connected flags are assigned in too many places to broadcast from
+        // each one, so poll while the engine runs and report only on a change
+        if (state == STATE_RUNNING || state == STATE_STARTING) {
+            startRigStatusPolling()
+        } else {
+            stopRigStatusPolling()
+        }
+    }
+
+    private val rigStatusHandler = Handler(Looper.getMainLooper())
+    private var rigStatusPolling = false
+    private var lastRigConnected: Boolean? = null
+    private val rigStatusRunnable = object : Runnable {
+        override fun run() {
+            if (!rigStatusPolling) return
+            broadcastRigStatus(isRigControlConnected())
+            rigStatusHandler.postDelayed(this, RIG_STATUS_POLL_INTERVAL_MS)
+        }
+    }
+
+    private fun startRigStatusPolling() {
+        if (rigStatusPolling) return
+        rigStatusPolling = true
+        rigStatusHandler.post(rigStatusRunnable)
+    }
+
+    private fun stopRigStatusPolling() {
+        rigStatusPolling = false
+        rigStatusHandler.removeCallbacks(rigStatusRunnable)
+        broadcastRigStatus(false)
+    }
+
+    private fun broadcastRigStatus(connected: Boolean) {
+        if (lastRigConnected == connected) return
+        lastRigConnected = connected
+        val intent = Intent(ACTION_RIG_STATUS).apply {
+            putExtra(EXTRA_RIG_CONNECTED, connected)
+        }
+        LocalBroadcastManager.getInstance(this).sendBroadcast(intent)
     }
 
     private fun broadcastDecode(
@@ -3995,6 +4035,10 @@ class JS8EngineService : Service() {
         const val ACTION_MESSAGE_RECEIVED = "com.js8call.example.ACTION_MESSAGE_RECEIVED"
         const val ACTION_QUEUE_TX = "com.js8call.example.ACTION_QUEUE_TX"
         const val ACTION_TIME_SYNC_ONCE = "com.js8call.example.ACTION_TIME_SYNC_ONCE"
+        const val ACTION_RIG_STATUS = "com.js8call.example.ACTION_RIG_STATUS"
+        const val EXTRA_RIG_CONNECTED = "rig_connected"
+
+        private const val RIG_STATUS_POLL_INTERVAL_MS = 2000L
         const val ACTION_SET_TIME_DRIFT = "com.js8call.example.ACTION_SET_TIME_DRIFT"
         const val ACTION_TIME_DRIFT = "com.js8call.example.ACTION_TIME_DRIFT"
 

@@ -36,6 +36,7 @@ class MonitorFragment : Fragment() {
     private lateinit var waterfallView: WaterfallView
     private lateinit var stateDot: ImageView
     private lateinit var statusText: TextView
+    private lateinit var rigIndicator: ImageView
     private lateinit var frequencyButton: MaterialButton
     private lateinit var powerSwitch: MaterialSwitch
     private lateinit var telemetryText: TextView
@@ -71,6 +72,7 @@ class MonitorFragment : Fragment() {
         waterfallView = view.findViewById(R.id.waterfall_view)
         stateDot = view.findViewById(R.id.state_dot)
         statusText = view.findViewById(R.id.status_text)
+        rigIndicator = view.findViewById(R.id.rig_indicator)
         frequencyButton = view.findViewById(R.id.frequency_button)
         powerSwitch = view.findViewById(R.id.power_switch)
         telemetryText = view.findViewById(R.id.telemetry_text)
@@ -103,6 +105,11 @@ class MonitorFragment : Fragment() {
             .setOnClickListener { showOverflowMenu(it) }
     }
 
+    override fun onResume() {
+        super.onResume()
+        updateRigIndicator()
+    }
+
     private fun observeViewModel() {
         // Observe status
         viewModel.status.observe(viewLifecycleOwner) { status ->
@@ -118,6 +125,8 @@ class MonitorFragment : Fragment() {
         }
 
         transmitViewModel.txState.observe(viewLifecycleOwner) { renderState() }
+
+        viewModel.rigConnected.observe(viewLifecycleOwner) { updateRigIndicator() }
 
         viewModel.radioFrequency.observe(viewLifecycleOwner) { frequencyHz ->
             if (frequencyHz != null && frequencyHz > 0) {
@@ -144,6 +153,12 @@ class MonitorFragment : Fragment() {
         lastColorRes = colorRes
 
         statusText.setText(labelRes)
+        // Transmitting and Error are both red, so an error changes the mark
+        // itself rather than relying on a shade the eye has to measure.
+        stateDot.setImageResource(
+            if (engineState == EngineState.ERROR) R.drawable.ic_error_outline
+            else R.drawable.status_dot
+        )
         stateDot.imageTintList =
             ColorStateList.valueOf(ContextCompat.getColor(requireContext(), colorRes))
 
@@ -151,6 +166,42 @@ class MonitorFragment : Fragment() {
         applyingSwitchState = true
         powerSwitch.isChecked = shouldBeOn
         applyingSwitchState = false
+
+        // A missing rig link only counts against a running engine
+        updateRigIndicator()
+    }
+
+    /** Shown only when rig control is switched on in Settings. */
+    private fun updateRigIndicator() {
+        if (!isAdded) return
+        val prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(requireContext())
+        val rigEnabled = prefs.getBoolean("rig_control_enabled", false) &&
+            prefs.getString("rig_type", "none") != "none"
+        if (!rigEnabled) {
+            rigIndicator.visibility = View.GONE
+            return
+        }
+
+        rigIndicator.visibility = View.VISIBLE
+        val engineState = viewModel.status.value?.state ?: EngineState.STOPPED
+        val connected = viewModel.rigConnected.value == true
+        // An error counts as an attempt: a failed start is usually the rig failing to connect
+        val attempted = engineState == EngineState.RUNNING || engineState == EngineState.ERROR
+        val colorRes = when {
+            connected -> R.color.snr_excellent
+            engineState == EngineState.STARTING -> R.color.tx_button_queued
+            attempted -> R.color.message_failed
+            else -> R.color.message_pending
+        }
+        rigIndicator.imageTintList =
+            ColorStateList.valueOf(ContextCompat.getColor(requireContext(), colorRes))
+        rigIndicator.contentDescription = getString(
+            when {
+                connected -> R.string.monitor_rig_connected
+                engineState == EngineState.STARTING -> R.string.monitor_rig_connecting
+                else -> R.string.monitor_rig_disconnected
+            }
+        )
     }
 
     private fun renderTelemetry(status: MonitorStatus) {

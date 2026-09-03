@@ -29,6 +29,9 @@ class MonitorViewModel(application: Application) : AndroidViewModel(application)
     private val _radioFrequency = MutableLiveData<Long>()
     val radioFrequency: LiveData<Long> = _radioFrequency
 
+    private val _rigConnected = MutableLiveData<Boolean>(false)
+    val rigConnected: LiveData<Boolean> = _rigConnected
+
     private val waterfallRenderer = WaterfallRenderer()
 
     init {
@@ -50,6 +53,8 @@ class MonitorViewModel(application: Application) : AndroidViewModel(application)
         _status.value = _status.value?.copy(state = EngineState.STOPPED)
         _isRunning.value = false
         waterfallRenderer.clear()
+        // The rig link cannot outlive the engine that opened it
+        updateRigConnected(false)
         // Service will be stopped by fragment
     }
 
@@ -65,6 +70,14 @@ class MonitorViewModel(application: Application) : AndroidViewModel(application)
         if (state == EngineState.STOPPED || state == EngineState.ERROR) {
             waterfallRenderer.clear()
         }
+    }
+
+    /**
+     * Update whether rig control has a live link to the radio.
+     */
+    fun updateRigConnected(connected: Boolean) {
+        if (_rigConnected.value == connected) return
+        _rigConnected.value = connected
     }
 
     /**
