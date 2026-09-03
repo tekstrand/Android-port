@@ -36,6 +36,7 @@ class MonitorFragment : Fragment() {
     private lateinit var waterfallView: WaterfallView
     private lateinit var stateDot: ImageView
     private lateinit var statusText: TextView
+    private lateinit var rigIndicator: ImageView
     private lateinit var frequencyButton: MaterialButton
     private lateinit var powerSwitch: MaterialSwitch
     private lateinit var telemetryText: TextView
@@ -47,6 +48,8 @@ class MonitorFragment : Fragment() {
 
     private var lastLabelRes = 0
     private var lastColorRes = 0
+    private var lastRigColorRes = -1
+    private var lastRigDescRes = -1
 
     // Set true while the switch is moved in code, so the listener can tell a
     // state update apart from a tap.
@@ -71,6 +74,7 @@ class MonitorFragment : Fragment() {
         waterfallView = view.findViewById(R.id.waterfall_view)
         stateDot = view.findViewById(R.id.state_dot)
         statusText = view.findViewById(R.id.status_text)
+        rigIndicator = view.findViewById(R.id.rig_indicator)
         frequencyButton = view.findViewById(R.id.frequency_button)
         powerSwitch = view.findViewById(R.id.power_switch)
         telemetryText = view.findViewById(R.id.telemetry_text)
@@ -103,6 +107,11 @@ class MonitorFragment : Fragment() {
             .setOnClickListener { showOverflowMenu(it) }
     }
 
+    override fun onResume() {
+        super.onResume()
+        updateRigIndicator()
+    }
+
     private fun observeViewModel() {
         // Observe status
         viewModel.status.observe(viewLifecycleOwner) { status ->
@@ -118,6 +127,8 @@ class MonitorFragment : Fragment() {
         }
 
         transmitViewModel.txState.observe(viewLifecycleOwner) { renderState() }
+
+        viewModel.rigConnected.observe(viewLifecycleOwner) { updateRigIndicator() }
 
         viewModel.radioFrequency.observe(viewLifecycleOwner) { frequencyHz ->
             if (frequencyHz != null && frequencyHz > 0) {
@@ -138,6 +149,8 @@ class MonitorFragment : Fragment() {
         powerSwitch.isChecked = shouldBeOn
         applyingSwitchState = false
 
+        updateRigIndicator()
+
         val (labelRes, colorRes) = when {
             transmitting -> R.string.monitor_state_transmitting to R.color.tx_button_transmitting
             engineState == EngineState.RUNNING -> R.string.monitor_state_receiving to R.color.snr_excellent
@@ -151,8 +164,45 @@ class MonitorFragment : Fragment() {
         lastColorRes = colorRes
 
         statusText.setText(labelRes)
+        // Transmitting and Error are both red, so an error changes the mark
+        // itself rather than relying on a shade the eye has to measure.
+        stateDot.setImageResource(
+            if (engineState == EngineState.ERROR) R.drawable.ic_error_outline
+            else R.drawable.status_dot
+        )
         stateDot.imageTintList =
             ColorStateList.valueOf(ContextCompat.getColor(requireContext(), colorRes))
+    }
+
+    /** Shown only when rig control is switched on in Settings. */
+    private fun updateRigIndicator() {
+        val prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(requireContext())
+        val rigEnabled = prefs.getBoolean("rig_control_enabled", false) &&
+            prefs.getString("rig_type", "none") != "none"
+        val engineState = viewModel.status.value?.state ?: EngineState.STOPPED
+        val connected = viewModel.rigConnected.value == true
+        val (colorRes, descRes) = when {
+            !rigEnabled -> 0 to 0
+            connected -> R.color.snr_excellent to R.string.monitor_rig_connected
+            engineState == EngineState.STARTING -> R.color.tx_button_queued to R.string.monitor_rig_connecting
+            // An error counts as an attempt: a failed start is usually the rig failing to connect
+            engineState == EngineState.RUNNING || engineState == EngineState.ERROR ->
+                R.color.message_failed to R.string.monitor_rig_disconnected
+            else -> R.color.message_pending to R.string.monitor_rig_disconnected
+        }
+        // Reached at the spectrum rate through renderState; skip unchanged paints
+        if (colorRes == lastRigColorRes && descRes == lastRigDescRes) return
+        lastRigColorRes = colorRes
+        lastRigDescRes = descRes
+
+        if (colorRes == 0) {
+            rigIndicator.visibility = View.GONE
+            return
+        }
+        rigIndicator.visibility = View.VISIBLE
+        rigIndicator.imageTintList =
+            ColorStateList.valueOf(ContextCompat.getColor(requireContext(), colorRes))
+        rigIndicator.contentDescription = getString(descRes)
     }
 
     private fun renderTelemetry(status: MonitorStatus) {
