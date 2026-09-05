@@ -450,25 +450,13 @@ class MonitorFragment : Fragment() {
         val frequencyHz = frequencyValues[position].toLongOrNull() ?: return
         android.util.Log.d("MonitorFragment", "Frequency selected: ${frequencyEntries[position]} ($frequencyHz Hz)")
 
-        // Check if rig control is enabled
-        val prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(requireContext())
-        val rigControlEnabled = prefs.getBoolean("rig_control_enabled", false)
-        val rigType = prefs.getString("rig_type", "none")
-
-        if (rigControlEnabled && (rigType == "network" || rigType == "hamlib_usb" || rigType == "trusdx_serial" || rigType == "qmx_serial")) {
-            // Send frequency change to service
-            val intent = Intent(requireContext(), JS8EngineService::class.java).apply {
-                action = JS8EngineService.ACTION_SET_FREQUENCY
-                putExtra(JS8EngineService.EXTRA_FREQUENCY_HZ, frequencyHz)
-            }
-            requireContext().startService(intent)
-
-            Snackbar.make(requireView(), "Setting frequency to ${frequencyEntries[position]}", Snackbar.LENGTH_SHORT).show()
-        } else if (rigControlEnabled && rigType == "rts_ptt") {
-            android.util.Log.d("MonitorFragment", "RTS PTT mode does not support frequency control")
-        } else {
-            android.util.Log.d("MonitorFragment", "Rig control not enabled or not supported type, skipping frequency change")
+        // The service knows which rigs take frequency control; it drops a
+        // request that has no rig link and reports failures itself
+        val intent = Intent(requireContext(), JS8EngineService::class.java).apply {
+            action = JS8EngineService.ACTION_SET_FREQUENCY
+            putExtra(JS8EngineService.EXTRA_FREQUENCY_HZ, frequencyHz)
         }
+        requireContext().startService(intent)
     }
 
     private fun updateFrequencyFromRadio(frequencyHz: Long) {
