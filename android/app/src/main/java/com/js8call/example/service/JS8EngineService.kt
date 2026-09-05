@@ -3938,6 +3938,12 @@ class JS8EngineService : Service() {
     private fun setFrequency(frequencyHz: Long) {
         if (!isRigControlConnected()) {
             Log.d(TAG, "Cannot set frequency: rig control not connected")
+            // A configured rig with no link is a failure to report; with rig
+            // control off the pick only stores the dial value, so stay quiet
+            if (!rigCtlErrorShown && rigControlMode != "none" && rigControlMode != "rts_ptt") {
+                broadcastError("Rig control is not connected")
+                rigCtlErrorShown = true
+            }
             return
         }
 
