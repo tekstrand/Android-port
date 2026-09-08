@@ -79,6 +79,14 @@ class MonitorFragment : Fragment() {
         powerSwitch = view.findViewById(R.id.power_switch)
         telemetryText = view.findViewById(R.id.telemetry_text)
 
+        // Navigation keeps this fragment instance but recreates its views at
+        // their layout defaults, so the repaint memo has to reset with them or
+        // the first paint skips and the fresh views stay stuck on the defaults
+        lastLabelRes = 0
+        lastColorRes = 0
+        lastRigColorRes = -1
+        lastRigDescRes = -1
+
         // Set up waterfall offset callback
         waterfallView.bindRenderer(viewModel.getWaterfallRenderer())
         waterfallView.onOffsetChanged = { offsetHz ->
