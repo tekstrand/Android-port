@@ -1632,7 +1632,9 @@ class JS8EngineService : Service() {
         LocalBroadcastManager.getInstance(this).sendBroadcast(intent)
 
         // The connected flags are assigned in too many places to broadcast from
-        // each one, so poll while the engine runs and report only on a change
+        // each one, so poll while the engine runs. Every poll sends, not only
+        // changes: local broadcasts are not sticky, and a UI that attaches
+        // late or missed one while stopped has no other way to catch up
         if (state == STATE_RUNNING) {
             startRigStatusPolling()
         } else {
@@ -1641,7 +1643,6 @@ class JS8EngineService : Service() {
     }
 
     private val rigStatusHandler = Handler(Looper.getMainLooper())
-    private var lastRigConnected = false
     private val rigStatusRunnable = object : Runnable {
         override fun run() {
             broadcastRigStatus(isRigControlConnected())
@@ -1660,8 +1661,6 @@ class JS8EngineService : Service() {
     }
 
     private fun broadcastRigStatus(connected: Boolean) {
-        if (lastRigConnected == connected) return
-        lastRigConnected = connected
         val intent = Intent(ACTION_RIG_STATUS).apply {
             putExtra(EXTRA_RIG_CONNECTED, connected)
         }
