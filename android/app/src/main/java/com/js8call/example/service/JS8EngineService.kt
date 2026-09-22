@@ -305,6 +305,11 @@ class JS8EngineService : Service() {
                 stopEngine()
                 stopSelf()
             }
+            ACTION_QUERY_STATE -> {
+                broadcastCurrentState()
+                // The query may have created the service; do not leave it idle
+                if (engine == null && !engineStartInProgress) stopSelf(startId)
+            }
             ACTION_SWITCH_AUDIO_DEVICE -> {
                 val deviceId = intent.getIntExtra(EXTRA_AUDIO_DEVICE_ID, -1)
                 Log.i(TAG, "Switching audio device to ID: $deviceId")
@@ -623,12 +628,7 @@ class JS8EngineService : Service() {
 
                 if (rigControlMode == "trusdx_serial") {
                     Log.i(TAG, "TruSDX mode active: skipping microphone capture")
-                    val label = if (selectedAudioDeviceId == TRUSDX_AUDIO_SPEAKER_ID) {
-                        TRUSDX_AUDIO_SPEAKER_NAME
-                    } else {
-                        TRUSDX_AUDIO_SERIAL_NAME
-                    }
-                    broadcastAudioDevice(label)
+                    broadcastAudioDevice(activeAudioDeviceLabel())
                     broadcastEngineState(STATE_RUNNING)
                     broadcastProcessTxQueue()
                     startTruSdxRxWorker()
@@ -1624,6 +1624,29 @@ class JS8EngineService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "Error stopping engine", e)
         }
+    }
+
+    private fun broadcastCurrentState() {
+        if (engine != null && !engineStartInProgress) {
+            if (isTransmitActive()) broadcastTxState(TX_STATE_STARTED)
+            broadcastAudioDevice(activeAudioDeviceLabel())
+            if (currentDialHz > 0L) broadcastRadioFrequency(currentDialHz)
+            val prefs = PreferenceManager.getDefaultSharedPreferences(this)
+            broadcastTimeDrift(prefs.getLong(PREF_TIME_DRIFT_MS, 0L))
+        }
+        broadcastEngineState(
+            when {
+                engineStartInProgress -> STATE_STARTING
+                engine != null -> STATE_RUNNING
+                else -> STATE_STOPPED
+            }
+        )
+    }
+
+    private fun activeAudioDeviceLabel(): String = when {
+        rigControlMode != "trusdx_serial" -> getActiveAudioDevice()
+        selectedAudioDeviceId == TRUSDX_AUDIO_SPEAKER_ID -> TRUSDX_AUDIO_SPEAKER_NAME
+        else -> TRUSDX_AUDIO_SERIAL_NAME
     }
 
     private fun broadcastEngineState(state: String) {
@@ -4022,6 +4045,7 @@ class JS8EngineService : Service() {
         // Actions
         const val ACTION_START = "com.js8call.example.ACTION_START"
         const val ACTION_STOP = "com.js8call.example.ACTION_STOP"
+        const val ACTION_QUERY_STATE = "com.js8call.example.ACTION_QUERY_STATE"
         const val ACTION_SWITCH_AUDIO_DEVICE = "com.js8call.example.ACTION_SWITCH_AUDIO_DEVICE"
         const val ACTION_SET_FREQUENCY = "com.js8call.example.ACTION_SET_FREQUENCY"
         const val ACTION_SET_TX_OFFSET = "com.js8call.example.ACTION_SET_TX_OFFSET"

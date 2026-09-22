@@ -226,6 +226,7 @@ class MainActivity : AppCompatActivity() {
         }
         LocalBroadcastManager.getInstance(this)
             .registerReceiver(monitorReceiver, monitorFilter)
+        queryEngineState()
     }
 
     override fun onStop() {
@@ -398,6 +399,13 @@ class MainActivity : AppCompatActivity() {
         } else {
             window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
+    }
+
+    private fun queryEngineState() {
+        val intent = Intent(this, JS8EngineService::class.java).apply {
+            action = JS8EngineService.ACTION_QUERY_STATE
+        }
+        startService(intent)
     }
 
     private fun stopEngineService() {
