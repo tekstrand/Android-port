@@ -62,6 +62,16 @@ struct DecodeFinished {
   std::size_t decoded = 0;
 };
 
+// Clock-offset search, raised after a run of empty decode cycles
+struct TimingSuggestion {
+  enum class Kind { Searching, Found, Idle } kind = Kind::Searching;
+  // Total drift to apply, for Found
+  int drift_ms = 0;
+  int step = 0;
+  int steps = 0;
+  int period_ms = 0;
+};
+
 struct Spectrum {
   std::vector<float> bins;
   float bin_hz = 0.0f;
@@ -69,7 +79,8 @@ struct Spectrum {
   float peak_db = 0.0f;
 };
 
-using Variant = std::variant<DecodeStarted, SyncStart, SyncState, Decoded, DecodeFinished, Spectrum>;
+using Variant = std::variant<DecodeStarted, SyncStart, SyncState, Decoded, DecodeFinished, Spectrum,
+                             TimingSuggestion>;
 
 }  // namespace events
 
@@ -138,6 +149,8 @@ public:
   virtual void set_vox_lead_ms(int milliseconds) = 0;
   virtual void set_submodes(int submodes) = 0;
   virtual void set_sync_stats(bool enabled) = 0;
+  virtual void set_timing_search(bool enabled) = 0;
+  virtual void dismiss_timing_suggestion() = 0;
 
   // Positive = engine clock ahead of system clock; takes effect at the next captured buffer.
   virtual void set_time_drift_ms(std::int64_t drift_ms) = 0;

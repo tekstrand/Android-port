@@ -7,6 +7,11 @@
             android:name="com.js8call.example.debug.DebugDecodeReceiver"
             android:exported="true"
             android:permission="android.permission.DUMP" />
+
+        <receiver
+            android:name="com.js8call.example.debug.DebugTimingReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP" />
     </application>
 
 </manifest>

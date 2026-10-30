@@ -90,6 +90,20 @@ adb shell am broadcast -n com.js8call.example/.debug.DebugDecodeReceiver --es te
 
 Output: the Decodes tab, and Messages for a complete `MSG` to your callsign. Log: `adb logcat -s JS8EngineService DebugDecodeReceiver`
 
+## Inject a timing suggestion
+
+Debug builds can show the clock-offset search results without a decode drought:
+
+```bash
+adb shell am broadcast -n com.js8call.example/.debug.DebugTimingReceiver --ei timing_kind 1 --el time_drift_ms -5500
+```
+
+- `--ei timing_kind 0` searching, `1` found, `2` idle (clears it)
+- `--el time_drift_ms -5500` offset offered on a find
+- `--ei timing_step 1 --ei timing_steps 3 --ei timing_period_ms 15000` search progress
+
+Output: the card on Monitor, or the snackbar and Monitor badge on other tabs. Log: `adb logcat -s JS8EngineService DebugTimingReceiver`
+
 ## Build Release APK (signed)
 
 Create a keystore once:

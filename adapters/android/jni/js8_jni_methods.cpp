@@ -246,6 +246,18 @@ Java_com_js8call_core_JS8Engine_nativeSetVoxLeadMs(
 }
 
 JNIEXPORT void JNICALL
+Java_com_js8call_core_JS8Engine_nativeSetTimingSearch(
+    JNIEnv*, jobject, jlong handle, jboolean enabled) {
+  js8_engine_set_timing_search(reinterpret_cast<JS8Engine_Native*>(handle), enabled == JNI_TRUE);
+}
+
+JNIEXPORT void JNICALL
+Java_com_js8call_core_JS8Engine_nativeDismissTimingSuggestion(
+    JNIEnv*, jobject, jlong handle) {
+  js8_engine_dismiss_timing_suggestion(reinterpret_cast<JS8Engine_Native*>(handle));
+}
+
+JNIEXPORT void JNICALL
 Java_com_js8call_core_JS8Engine_nativeSetTimeDriftMs(
     JNIEnv* /* env */,
     jobject /* thiz */,

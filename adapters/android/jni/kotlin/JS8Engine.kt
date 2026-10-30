@@ -127,6 +127,16 @@ class JS8Engine private constructor(
         withNativeHandle { nativeSetVoxLeadMs(it, milliseconds) }
     }
 
+    /** Search shifted decode windows for a clock offset after a run of empty cycles. */
+    fun setTimingSearchEnabled(enabled: Boolean) {
+        withNativeHandle { nativeSetTimingSearch(it, enabled) }
+    }
+
+    /** Drop a standing find and wait as long as after a search that found nothing. */
+    fun dismissTimingSuggestion() {
+        withNativeHandle { nativeDismissTimingSuggestion(it) }
+    }
+
     /**
      * Set preferred output audio device ID (0 or negative for default).
      */
@@ -314,6 +324,8 @@ class JS8Engine private constructor(
     private external fun nativeSetOutputDevice(handle: Long, deviceId: Int)
     private external fun nativeSetTxBoostEnabled(handle: Long, enabled: Boolean)
     private external fun nativeSetVoxLeadMs(handle: Long, milliseconds: Int)
+    private external fun nativeSetTimingSearch(handle: Long, enabled: Boolean)
+    private external fun nativeDismissTimingSuggestion(handle: Long)
     private external fun nativeIsRunning(handle: Long): Boolean
     private external fun nativeTransmitMessage(
         handle: Long,
@@ -404,5 +416,11 @@ class JS8Engine private constructor(
          * Called with TX audio PCM samples when enabled.
          */
         fun onTxAudio(samples: ShortArray, sampleRateHz: Int) {}
+
+        /**
+         * Clock-offset search. [kind] is 0 searching, 1 found, 2 idle.
+         * [driftMs] is the total drift to apply on a find.
+         */
+        fun onTimingSuggestion(kind: Int, driftMs: Int, step: Int, steps: Int, periodMs: Int) {}
     }
 }

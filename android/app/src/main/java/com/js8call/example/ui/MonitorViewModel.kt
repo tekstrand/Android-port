@@ -1,9 +1,11 @@
 package com.js8call.example.ui
 
 import android.app.Application
+import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
+import com.js8call.example.R
 import com.js8call.example.model.EngineState
 import com.js8call.example.model.MonitorStatus
 import com.js8call.example.model.SpectrumData
@@ -31,6 +33,23 @@ class MonitorViewModel(application: Application) : AndroidViewModel(application)
 
     private val _rigConnected = MutableLiveData<Boolean>(false)
     val rigConnected: LiveData<Boolean> = _rigConnected
+
+    data class TimingSuggestion(
+        val kind: Int,
+        val driftMs: Long,
+        val step: Int,
+        val steps: Int,
+        val periodMs: Int,
+        val eventAt: Long
+    ) {
+        fun foundText(context: Context): String = context.getString(
+            R.string.monitor_timing_found,
+            String.format("%.1f s", kotlin.math.abs(driftMs) / 1000.0)
+        )
+    }
+
+    private val _timingSuggestion = MutableLiveData<TimingSuggestion?>(null)
+    val timingSuggestion: LiveData<TimingSuggestion?> = _timingSuggestion
 
     private val waterfallRenderer = WaterfallRenderer()
 
@@ -69,6 +88,7 @@ class MonitorViewModel(application: Application) : AndroidViewModel(application)
         _isRunning.value = (state == EngineState.RUNNING)
         if (state == EngineState.STOPPED || state == EngineState.ERROR) {
             waterfallRenderer.clear()
+            _timingSuggestion.value = null
         }
     }
 
@@ -120,6 +140,10 @@ class MonitorViewModel(application: Application) : AndroidViewModel(application)
      */
     fun updateTimeDrift(driftMs: Long) {
         _status.value = _status.value?.copy(timeDriftMs = driftMs)
+    }
+
+    fun updateTimingSuggestion(suggestion: TimingSuggestion?) {
+        _timingSuggestion.value = suggestion
     }
 
     /**

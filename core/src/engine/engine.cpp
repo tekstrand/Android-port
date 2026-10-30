@@ -364,7 +364,22 @@ public:
 
   void set_sync_stats(bool enabled) override { sync_stats_.store(enabled); }
 
+  void set_timing_search(bool enabled) override {
+    std::lock_guard<std::mutex> lock(timing_mutex_);
+    timing_.enabled = enabled;
+    if (!enabled) reset_timing_search(0);
+  }
+
+  void dismiss_timing_suggestion() override {
+    std::lock_guard<std::mutex> lock(timing_mutex_);
+    reset_timing_search(-kTimingRetryCycles);
+  }
+
   void set_time_drift_ms(std::int64_t drift_ms) override {
+    {
+      std::lock_guard<std::mutex> lock(timing_mutex_);
+      reset_timing_search(0);
+    }
     if (time_drift_ms_.exchange(drift_ms) == drift_ms) return;
     tx_modulator_.set_clock_offset_ms(drift_ms);
     drift_realign_pending_.store(true);
@@ -504,27 +519,27 @@ public:
       }
     }
 
-    void set_submode_window(protocol::SubmodeId id, int start, int size) {
+    static void set_submode_window(DecodeParams& params, protocol::SubmodeId id, int start, int size) {
       switch (id) {
         case protocol::SubmodeId::A:
-          decode_state_.params.kposA = start;
-          decode_state_.params.kszA = size;
+          params.kposA = start;
+          params.kszA = size;
           break;
         case protocol::SubmodeId::B:
-          decode_state_.params.kposB = start;
-          decode_state_.params.kszB = size;
+          params.kposB = start;
+          params.kszB = size;
           break;
         case protocol::SubmodeId::C:
-          decode_state_.params.kposC = start;
-          decode_state_.params.kszC = size;
+          params.kposC = start;
+          params.kszC = size;
           break;
         case protocol::SubmodeId::E:
-          decode_state_.params.kposE = start;
-          decode_state_.params.kszE = size;
+          params.kposE = start;
+          params.kszE = size;
           break;
         case protocol::SubmodeId::I:
-          decode_state_.params.kposI = start;
-          decode_state_.params.kszI = size;
+          params.kposI = start;
+          params.kszI = size;
           break;
       }
     }
@@ -663,6 +678,7 @@ public:
       }
 
       bool any = false;
+      bool new_primary_slot = false;
       decode_state_.params.nsubmodes = 0;
 
       // Use isDecodeReady() to determine if each submode should decode
@@ -718,9 +734,16 @@ public:
           int const buffer_size = kJs8NtMax * kJs8RxSampleRate;  // 720,000 samples
           int const wrapped_start = start % buffer_size;
 
-          set_submode_window(sch.id, wrapped_start, size);
+          set_submode_window(decode_state_.params, sch.id, wrapped_start, size);
           decode_state_.params.nsubmodes |= (1 << static_cast<int>(sch.id));
           any = true;
+
+          // Timing trials shift this window. Turbo retries reuse the slot start.
+          if (auto const* primary = primary_schedule(); primary && primary->id == sch.id) {
+            new_primary_slot = wrapped_start != current_window_start_;
+            current_window_start_ = wrapped_start;
+            current_window_size_ = size;
+          }
 
           if (callbacks_.on_log) {
             // Get UTC time for logging
@@ -757,7 +780,115 @@ public:
       snapshot.params = decode_state_.params;
       snapshot.samples = decode_state_.samples;
       snapshot.drift_ms_at_capture = ring_drift_ms_;
+      snapshot.counts_for_drought = new_primary_slot;
       enqueue_decode(std::move(snapshot));
+
+      if (new_primary_slot) enqueue_timing_trial();
+    }
+
+    void enqueue_timing_trial() {
+      auto const* sch = primary_schedule();
+      if (sch == nullptr) return;
+
+      int const period = sch->period_samples;
+      int const steps = kTimingTrialSteps;
+      auto const rate = config_.sample_rate_hz ? config_.sample_rate_hz : kJs8RxSampleRate;
+      int step = 0;
+      {
+        std::lock_guard<std::mutex> lock(timing_mutex_);
+        if (!timing_.armed || timing_.step >= steps) return;
+        step = timing_.step++;
+        ++timing_.outstanding;
+
+        events::TimingSuggestion ev;
+        ev.kind = events::TimingSuggestion::Kind::Searching;
+        ev.step = step + 1;
+        ev.steps = steps;
+        ev.period_ms = static_cast<int>((static_cast<long long>(period) * 1000) / rate);
+        emit_event(events::Variant{ev});
+      }
+      // A forward shift would read past the write pointer into last minute's audio
+      int const shift = -(period / (steps + 1)) * (step + 1);
+
+      DecodeState trial;
+      trial.params = decode_state_.params;
+      trial.samples = decode_state_.samples;
+      trial.drift_ms_at_capture = ring_drift_ms_;
+      trial.timing_trial = true;
+      trial.params.nsubmodes = (1 << static_cast<int>(sch->id));
+
+      int const ring = static_cast<int>(decode_state_.samples.size());
+      int const shifted = ((current_window_start_ + shift) % ring + ring) % ring;
+      set_submode_window(trial.params, sch->id, shifted, current_window_size_);
+      enqueue_decode(std::move(trial));
+    }
+
+    // Give up when the last trial returns, not when it is queued
+    void finish_timing_trial() {
+      std::lock_guard<std::mutex> lock(timing_mutex_);
+      if (--timing_.outstanding > 0) return;
+      if (!timing_.armed || timing_.step < kTimingTrialSteps) return;
+      reset_timing_search(-kTimingRetryCycles);
+    }
+
+    // Caller holds timing_mutex_
+    void reset_timing_search(int quiet) {
+      bool const active = timing_.armed || timing_.found;
+      timing_.armed = false;
+      timing_.found = false;
+      timing_.step = 0;
+      timing_.quiet = quiet;
+      if (!active) return;
+      events::TimingSuggestion ev;
+      ev.kind = events::TimingSuggestion::Kind::Idle;
+      emit_event(events::Variant{ev});
+    }
+
+    // Longest-period enabled submode
+    SubmodeSchedule const* primary_schedule() const {
+      SubmodeSchedule const* best = nullptr;
+      for (auto const& sch : schedules_) {
+        if ((enabled_submodes_.load() & (1 << static_cast<int>(sch.id))) == 0) continue;
+        if (best == nullptr || sch.period_samples > best->period_samples) best = &sch;
+      }
+      return best;
+    }
+
+    void note_decode_cycle(std::size_t decoded, bool counts_for_drought) {
+      std::lock_guard<std::mutex> lock(timing_mutex_);
+      // Decodes in any window retire a search or a standing find
+      if (decoded > 0) {
+        reset_timing_search(0);
+        return;
+      }
+      if (!counts_for_drought || !timing_.enabled || timing_.armed || timing_.found) return;
+      if (++timing_.quiet < kTimingQuietCycles) return;
+      timing_.step = 0;
+      timing_.quiet = 0;
+      timing_.armed = true;
+    }
+
+    // Finds the ordinary window can reach are off-time stations, not clock error
+    bool beyond_ordinary_window(DecodeState const& task, events::Decoded const& d) const {
+      auto sm = submode_from_varicode(d.mode);
+      if (!sm) return false;
+      int const period_ms = sm->tx_seconds * 1000;
+      int shift = static_cast<int>((d.drift_ms - task.drift_ms_at_capture) % period_ms);
+      if (shift > period_ms / 2) shift -= period_ms;
+      else if (shift < -period_ms / 2) shift += period_ms;
+      return std::abs(shift) >= kTimingMinShiftMs;
+    }
+
+    void report_timing_found(int drift_ms) {
+      std::lock_guard<std::mutex> lock(timing_mutex_);
+      if (!timing_.armed) return;  // first trial home wins
+      timing_.armed = false;
+      timing_.step = 0;
+      timing_.found = true;
+      events::TimingSuggestion ev;
+      ev.kind = events::TimingSuggestion::Kind::Found;
+      ev.drift_ms = drift_ms;
+      emit_event(events::Variant{ev});
     }
 
     bool start_tx_output() {
@@ -1043,6 +1174,24 @@ public:
     // Written only on the audio thread; may lag time_drift_ms_ by one capture buffer.
     std::int64_t ring_drift_ms_{0};
     bool running_{false};
+
+    // Trials plus the ordinary window cover one period
+    static constexpr int kTimingTrialSteps = 3;
+    static constexpr int kTimingQuietCycles = 8;
+    static constexpr int kTimingRetryCycles = 40;
+    static constexpr int kTimingMinShiftMs = 2000;
+    struct TimingSearch {
+      bool enabled{true};
+      bool armed{false};
+      bool found{false};
+      int step{0};
+      int outstanding{0};
+      int quiet{0};
+    };
+    std::mutex timing_mutex_;
+    TimingSearch timing_;
+    int current_window_start_{-1};
+    int current_window_size_{0};
     std::mutex tx_mutex_;
     std::deque<TxFrame> tx_queue_;
     TxSettings tx_settings_{};
@@ -1176,11 +1325,15 @@ public:
         std::lock_guard<std::mutex> lock(decode_mutex_);
         // Keep the freshest snapshot queued, carrying forward any ready
         // submode windows that appeared only in the replaced snapshot.
-        if (decode_queue_.empty()) {
+        // Timing trials are never merged.
+        auto queued = std::find_if(decode_queue_.rbegin(), decode_queue_.rend(),
+                                   [](DecodeState const& s) { return !s.timing_trial; });
+        if (snapshot.timing_trial || queued == decode_queue_.rend()) {
           decode_queue_.push_back(std::move(snapshot));
         } else {
-          merge_decode_windows(snapshot.params, decode_queue_.back().params);
-          decode_queue_.back() = std::move(snapshot);
+          merge_decode_windows(snapshot.params, queued->params);
+          snapshot.counts_for_drought |= queued->counts_for_drought;
+          *queued = std::move(snapshot);
         }
       }
       decode_cv_.notify_one();
@@ -1233,11 +1386,24 @@ public:
             auto out = *d;
             out.drift_ms = compute_drift_estimate(task, out);
             out.capture_drift_ms = task.drift_ms_at_capture;
+            // Trial decodes would show twice once the offset is applied
+            if (task.timing_trial) {
+              if (beyond_ordinary_window(task, out)) report_timing_found(out.drift_ms);
+              return;
+            }
             emit_event(events::Variant{std::move(out)});
             return;
           }
+          if (task.timing_trial) return;
           emit_event(ev);
         });
+
+        if (task.timing_trial) {
+          finish_timing_trial();
+        } else {
+          note_decode_cycle(decode_count, task.counts_for_drought);
+        }
+
         if (callbacks_.on_log) {
           char log_msg[256];
           snprintf(log_msg, sizeof(log_msg),

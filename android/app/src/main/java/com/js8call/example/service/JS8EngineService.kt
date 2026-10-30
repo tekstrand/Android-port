@@ -18,6 +18,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
@@ -284,6 +285,9 @@ class JS8EngineService : Service() {
         if (key == PREF_LOG_MESSAGES) {
             updateMessageLogging()
         }
+        if (key == PREF_TIMING_SEARCH) {
+            applyTimingSearchSetting()
+        }
     }
 
     override fun onCreate() {
@@ -358,9 +362,17 @@ class JS8EngineService : Service() {
                 driftMmaMs = driftMs
                 driftMmaN = if (driftMs == 0L) 0 else 1
                 applyTimeDrift(driftMs)
+                updateTimingSuggestion(TIMING_IDLE, 0L, 0, 0, 0)
             }
             ACTION_DEBUG_INJECT_DECODE -> {
                 if (BuildConfig.DEBUG) injectDecode(intent)
+            }
+            ACTION_DISMISS_TIMING -> {
+                engine?.dismissTimingSuggestion()
+                updateTimingSuggestion(TIMING_IDLE, 0L, 0, 0, 0)
+            }
+            ACTION_DEBUG_INJECT_TIMING -> {
+                if (BuildConfig.DEBUG) injectTimingSuggestion(intent)
             }
         }
         return START_STICKY
@@ -624,6 +636,17 @@ class JS8EngineService : Service() {
                     }
                 }
 
+                override fun onTimingSuggestion(
+                    kind: Int, driftMs: Int, step: Int, steps: Int, periodMs: Int
+                ) {
+                    Log.i(TAG, "Timing suggestion: kind=$kind drift=$driftMs step=$step/$steps period=$periodMs")
+                    mainHandler.post {
+                        // A find can land during close(), after the stopped broadcast
+                        if (engineStartGeneration != generation) return@post
+                        updateTimingSuggestion(kind, driftMs.toLong(), step, steps, periodMs)
+                    }
+                }
+
                 override fun onError(message: String) {
                     Log.e(TAG, "Engine error: $message")
                     mainHandler.post {
@@ -674,6 +697,7 @@ class JS8EngineService : Service() {
 
                 applyTxBoostSetting()
                 applyTimeDriftSetting()
+                applyTimingSearchSetting()
 
                 if (rigControlMode == "trusdx_serial") {
                     Log.i(TAG, "TruSDX mode active: skipping microphone capture")
@@ -1727,6 +1751,7 @@ class JS8EngineService : Service() {
             engine?.stop()
             engine?.close()
             engine = null
+            timingSuggestion = null
 
             broadcastEngineState(STATE_STOPPED)
             Log.i(TAG, "Engine stopped")
@@ -1757,6 +1782,7 @@ class JS8EngineService : Service() {
     private val rigStatusRunnable = object : Runnable {
         override fun run() {
             broadcastRigStatus(isRigControlConnected())
+            broadcastTimingSuggestion()
             rigStatusHandler.postDelayed(this, RIG_STATUS_POLL_INTERVAL_MS)
         }
     }
@@ -1805,6 +1831,16 @@ class JS8EngineService : Service() {
             now.get(Calendar.MINUTE) * 100 + now.get(Calendar.SECOND)
         Log.i(TAG, "Injected decode: '$text' snr=$snr freq=$freq type=$type mode=$mode")
         handleDecode(utc, snr, 0f, freq, text, type, 1f, mode, 0)
+    }
+
+    private fun injectTimingSuggestion(intent: Intent) {
+        val kind = intent.getIntExtra(EXTRA_TIMING_KIND, TIMING_FOUND)
+        val driftMs = intent.getLongExtra(EXTRA_TIME_DRIFT_MS, -5500L)
+        val step = intent.getIntExtra(EXTRA_TIMING_STEP, 1)
+        val steps = intent.getIntExtra(EXTRA_TIMING_STEPS, 3)
+        val periodMs = intent.getIntExtra(EXTRA_TIMING_PERIOD_MS, 15_000)
+        Log.i(TAG, "Injected timing suggestion: kind=$kind drift=$driftMs step=$step/$steps")
+        updateTimingSuggestion(kind, driftMs, step, steps, periodMs)
     }
 
     private fun broadcastDecode(
@@ -1871,6 +1907,46 @@ class JS8EngineService : Service() {
             Log.i(TAG, "Time drift restored: $driftMs ms")
         }
         broadcastTimeDrift(driftMs)
+    }
+
+    private fun applyTimingSearchSetting() {
+        val enabled = PreferenceManager.getDefaultSharedPreferences(this)
+            .getBoolean(PREF_TIMING_SEARCH, true)
+        engine?.setTimingSearchEnabled(enabled)
+        Log.i(TAG, "Clock offset search: ${if (enabled) "enabled" else "disabled"}")
+    }
+
+    private class TimingSuggestion(
+        val kind: Int, val driftMs: Long, val step: Int, val steps: Int, val periodMs: Int,
+        val eventAt: Long
+    )
+
+    private var timingSuggestion: TimingSuggestion? = null
+
+    private fun updateTimingSuggestion(
+        kind: Int, driftMs: Long, step: Int, steps: Int, periodMs: Int
+    ) {
+        timingSuggestion = if (kind == TIMING_IDLE) {
+            null
+        } else {
+            TimingSuggestion(kind, driftMs, step, steps, periodMs, SystemClock.elapsedRealtime())
+        }
+        broadcastTimingSuggestion()
+    }
+
+    private fun broadcastTimingSuggestion() {
+        val suggestion = timingSuggestion
+        val intent = Intent(ACTION_TIMING_SUGGESTION).apply {
+            putExtra(EXTRA_TIMING_KIND, suggestion?.kind ?: TIMING_IDLE)
+            if (suggestion != null) {
+                putExtra(EXTRA_TIME_DRIFT_MS, suggestion.driftMs)
+                putExtra(EXTRA_TIMING_STEP, suggestion.step)
+                putExtra(EXTRA_TIMING_STEPS, suggestion.steps)
+                putExtra(EXTRA_TIMING_PERIOD_MS, suggestion.periodMs)
+                putExtra(EXTRA_TIMING_EVENT_AT, suggestion.eventAt)
+            }
+        }
+        LocalBroadcastManager.getInstance(this).sendBroadcast(intent)
     }
 
     private fun broadcastTimeDrift(driftMs: Long) {
@@ -4216,8 +4292,19 @@ class JS8EngineService : Service() {
         const val ACTION_TIME_SYNC_ONCE = "com.js8call.example.ACTION_TIME_SYNC_ONCE"
         const val ACTION_SET_TIME_DRIFT = "com.js8call.example.ACTION_SET_TIME_DRIFT"
         const val ACTION_TIME_DRIFT = "com.js8call.example.ACTION_TIME_DRIFT"
+        const val ACTION_TIMING_SUGGESTION = "com.js8call.example.ACTION_TIMING_SUGGESTION"
+        const val ACTION_DISMISS_TIMING = "com.js8call.example.ACTION_DISMISS_TIMING"
+        const val EXTRA_TIMING_KIND = "timing_kind"
+        const val EXTRA_TIMING_STEP = "timing_step"
+        const val EXTRA_TIMING_STEPS = "timing_steps"
+        const val EXTRA_TIMING_PERIOD_MS = "timing_period_ms"
+        const val EXTRA_TIMING_EVENT_AT = "timing_event_at"
+        const val TIMING_SEARCHING = 0
+        const val TIMING_FOUND = 1
+        const val TIMING_IDLE = 2
         const val ACTION_RIG_STATUS = "com.js8call.example.ACTION_RIG_STATUS"
         const val ACTION_DEBUG_INJECT_DECODE = "com.js8call.example.ACTION_DEBUG_INJECT_DECODE"
+        const val ACTION_DEBUG_INJECT_TIMING = "com.js8call.example.ACTION_DEBUG_INJECT_TIMING"
 
         // Engine states
         const val STATE_STOPPED = "stopped"
@@ -4270,6 +4357,7 @@ class JS8EngineService : Service() {
         const val PREF_TRANSMIT_MODE = "transmit_mode"
         const val PREF_HEARTBEAT_INTERVAL = "heartbeat_interval"
         const val PREF_TIME_SYNC_AUTO = "time_sync_auto"
+        const val PREF_TIMING_SEARCH = "timing_search"
         const val PREF_TIME_DRIFT_MS = "time_drift_ms"
         const val PREF_LOG_MESSAGES = "log_messages_to_file"
         const val RIG_MODE_USB = "USB"

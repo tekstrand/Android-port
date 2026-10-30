@@ -39,6 +39,11 @@
     <string name="monitor_time_drift_reset_action">Reset</string>
     <string name="monitor_time_drift_applied">Time drift %+d ms</string>
     <string name="monitor_time_drift_range">Enter %1$+d to %2$+d ms</string>
+    <string name="monitor_timing_checking">%1$s · checking timing %2$ds</string>
+    <string name="monitor_timing_found">Signals are not decoding. Timing looks %1$s off.</string>
+    <string name="monitor_timing_dismiss">Dismiss</string>
+    <string name="monitor_timing_apply">Fix it</string>
+    <string name="monitor_timing_show">View</string>
     <string name="monitor_audio_device_switching">Switching to %s…</string>
     <string name="monitor_audio_device_selected">Audio device: %s</string>
     <string name="monitor_audio_device_lost">%s was removed. Monitoring stopped.</string>
@@ -183,6 +188,8 @@
     <string name="settings_category_timing">Timing</string>
     <string name="settings_time_sync_auto">Auto time sync</string>
     <string name="settings_time_sync_auto_summary">Continuously adjust the app\'s clock drift from received signals. Useful off-grid where the device clock cannot sync.</string>
+    <string name="settings_timing_search">Search for clock offset</string>
+    <string name="settings_timing_search_summary">When nothing decodes for a few minutes, try shifted decode windows and offer a correction if one decodes. Turn off when the device clock is known to be good.</string>
     <string name="settings_heartbeat_interval">Heartbeat Interval</string>
     <string name="settings_heartbeat_interval_summary">Time between automatic heartbeats</string>
 

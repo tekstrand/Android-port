@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -45,6 +46,8 @@ class MonitorFragment : Fragment() {
     private lateinit var powerSwitch: MaterialSwitch
     private lateinit var telemetryText: TextView
     private lateinit var driftText: TextView
+    private lateinit var timingCard: View
+    private lateinit var timingCardText: TextView
 
     // Frequency management
     private var frequencyEntries = listOf<String>()
@@ -84,6 +87,8 @@ class MonitorFragment : Fragment() {
         powerSwitch = view.findViewById(R.id.power_switch)
         telemetryText = view.findViewById(R.id.telemetry_text)
         driftText = view.findViewById(R.id.drift_text)
+        timingCard = view.findViewById(R.id.timing_card)
+        timingCardText = view.findViewById(R.id.timing_card_text)
 
         // Navigation keeps this fragment instance but recreates its views at
         // their layout defaults, so the repaint memo has to reset with them or
@@ -120,6 +125,10 @@ class MonitorFragment : Fragment() {
         view.findViewById<MaterialButton>(R.id.monitor_overflow)
             .setOnClickListener { showOverflowMenu(it) }
         driftText.setOnClickListener { showTimeDriftDialog() }
+        view.findViewById<MaterialButton>(R.id.timing_dismiss)
+            .setOnClickListener { dismissTimingSuggestion() }
+        view.findViewById<MaterialButton>(R.id.timing_apply)
+            .setOnClickListener { applyTimingSuggestion() }
     }
 
     override fun onResume() {
@@ -144,6 +153,11 @@ class MonitorFragment : Fragment() {
         transmitViewModel.txState.observe(viewLifecycleOwner) { renderState() }
 
         viewModel.rigConnected.observe(viewLifecycleOwner) { updateRigIndicator() }
+
+        viewModel.timingSuggestion.observe(viewLifecycleOwner) { suggestion ->
+            renderTimingCard(suggestion)
+            viewModel.status.value?.let { renderTelemetry(it) }
+        }
 
         viewModel.radioFrequency.observe(viewLifecycleOwner) { frequencyHz ->
             if (frequencyHz != null && frequencyHz > 0) {
@@ -228,11 +242,50 @@ class MonitorFragment : Fragment() {
         } else {
             offset
         }
-        driftText.text = if (status.timeDriftMs != 0L) {
+        val drift = if (status.timeDriftMs != 0L) {
             String.format("%+d ms", status.timeDriftMs)
         } else {
             "0 ms"
         }
+        driftText.text = timingSearchSecondsLeft()?.let {
+            getString(R.string.monitor_timing_checking, drift, it)
+        } ?: drift
+    }
+
+    /** Null when no search is running. */
+    private fun timingSearchSecondsLeft(): Long? {
+        val search = viewModel.timingSuggestion.value
+            ?.takeIf { it.kind == JS8EngineService.TIMING_SEARCHING } ?: return null
+        // The last step's trial returns within seconds
+        val remaining = (search.steps - search.step).coerceAtLeast(0)
+        val left = search.eventAt + remaining * search.periodMs.toLong() - SystemClock.elapsedRealtime()
+        return (left.coerceAtLeast(1L) + 999L) / 1000L
+    }
+
+    private fun renderTimingCard(suggestion: MonitorViewModel.TimingSuggestion?) {
+        if (suggestion?.kind != JS8EngineService.TIMING_FOUND) {
+            timingCard.visibility = View.GONE
+            return
+        }
+        timingCardText.text = suggestion.foundText(requireContext())
+        timingCard.visibility = View.VISIBLE
+    }
+
+    private fun dismissTimingSuggestion() {
+        val intent = Intent(requireContext(), JS8EngineService::class.java).apply {
+            action = JS8EngineService.ACTION_DISMISS_TIMING
+        }
+        requireContext().startService(intent)
+    }
+
+    private fun applyTimingSuggestion() {
+        val suggestion = viewModel.timingSuggestion.value ?: return
+        applyTimeDrift(suggestion.driftMs)
+        Snackbar.make(
+            requireView(),
+            getString(R.string.monitor_time_drift_applied, suggestion.driftMs.toInt()),
+            Snackbar.LENGTH_SHORT
+        ).show()
     }
 
     private fun showOverflowMenu(anchor: View) {

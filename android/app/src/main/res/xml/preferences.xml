@@ -313,6 +313,13 @@
             app:defaultValue="false"
             app:iconSpaceReserved="false" />
 
+        <SwitchPreferenceCompat
+            app:key="timing_search"
+            app:title="@string/settings_timing_search"
+            app:summary="@string/settings_timing_search_summary"
+            app:defaultValue="true"
+            app:iconSpaceReserved="false" />
+
     </PreferenceCategory>
 
 <!-- About Category -->

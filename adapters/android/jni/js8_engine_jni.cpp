@@ -36,6 +36,8 @@ JNIEXPORT void JNICALL Java_com_js8call_core_JS8Engine_nativeSetSubmodes(JNIEnv*
 JNIEXPORT void JNICALL Java_com_js8call_core_JS8Engine_nativeSetOutputDevice(JNIEnv*, jobject, jlong, jint);
 JNIEXPORT void JNICALL Java_com_js8call_core_JS8Engine_nativeSetTxBoostEnabled(JNIEnv*, jobject, jlong, jboolean);
 JNIEXPORT void JNICALL Java_com_js8call_core_JS8Engine_nativeSetVoxLeadMs(JNIEnv*, jobject, jlong, jint);
+JNIEXPORT void JNICALL Java_com_js8call_core_JS8Engine_nativeSetTimingSearch(JNIEnv*, jobject, jlong, jboolean);
+JNIEXPORT void JNICALL Java_com_js8call_core_JS8Engine_nativeDismissTimingSuggestion(JNIEnv*, jobject, jlong);
 JNIEXPORT jboolean JNICALL Java_com_js8call_core_JS8Engine_nativeIsRunning(JNIEnv*, jobject, jlong);
 JNIEXPORT jboolean JNICALL Java_com_js8call_core_JS8Engine_nativeTransmitMessage(JNIEnv*, jobject, jlong, jstring, jstring, jstring, jstring, jint, jdouble, jdouble, jboolean, jboolean);
 JNIEXPORT jboolean JNICALL Java_com_js8call_core_JS8Engine_nativeTransmitFrame(JNIEnv*, jobject, jlong, jstring, jint, jint, jdouble, jdouble);
@@ -483,6 +485,17 @@ static void event_callback(JS8Engine_Native* native, js8core::events::Variant co
       env->CallVoidMethod(native->callback_handler, method,
                          static_cast<jint>(decode_finished->decoded));
     }
+  } else if (auto* timing = std::get_if<js8core::events::TimingSuggestion>(&event)) {
+    // Call onTimingSuggestion(int kind, int driftMs, int step, int steps, int periodMs)
+    jmethodID method = env->GetMethodID(handler_class, "onTimingSuggestion", "(IIIII)V");
+    if (method) {
+      env->CallVoidMethod(native->callback_handler, method,
+                          static_cast<jint>(timing->kind),
+                          static_cast<jint>(timing->drift_ms),
+                          static_cast<jint>(timing->step),
+                          static_cast<jint>(timing->steps),
+                          static_cast<jint>(timing->period_ms));
+    }
   }
 
   env->DeleteLocalRef(handler_class);
@@ -865,6 +878,14 @@ void js8_engine_set_vox_lead_ms(JS8Engine_Native* engine, int milliseconds) {
   if (engine && engine->engine) engine->engine->set_vox_lead_ms(milliseconds);
 }
 
+void js8_engine_set_timing_search(JS8Engine_Native* engine, bool enabled) {
+  if (engine && engine->engine) engine->engine->set_timing_search(enabled);
+}
+
+void js8_engine_dismiss_timing_suggestion(JS8Engine_Native* engine) {
+  if (engine && engine->engine) engine->engine->dismiss_timing_suggestion();
+}
+
 int js8_engine_transmit_message(JS8Engine_Native* engine,
                                 const char* text,
                                 const char* my_call,
@@ -981,6 +1002,9 @@ int js8_register_natives(JavaVM* vm, JNIEnv* env) {
     {"nativeSetOutputDevice", "(JI)V", (void*)Java_com_js8call_core_JS8Engine_nativeSetOutputDevice},
     {"nativeSetTxBoostEnabled", "(JZ)V", (void*)Java_com_js8call_core_JS8Engine_nativeSetTxBoostEnabled},
     {"nativeSetVoxLeadMs", "(JI)V", (void*)Java_com_js8call_core_JS8Engine_nativeSetVoxLeadMs},
+    {"nativeSetTimingSearch", "(JZ)V", (void*)Java_com_js8call_core_JS8Engine_nativeSetTimingSearch},
+    {"nativeDismissTimingSuggestion", "(J)V",
+     (void*)Java_com_js8call_core_JS8Engine_nativeDismissTimingSuggestion},
     {"nativeTransmitMessage", "(JLjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;IDDZZ)Z",
      (void*)Java_com_js8call_core_JS8Engine_nativeTransmitMessage},
     {"nativeTransmitFrame", "(JLjava/lang/String;IIDD)Z",

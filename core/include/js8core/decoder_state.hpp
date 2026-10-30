@@ -39,6 +39,10 @@ struct DecodeState {
   DecodeParams params;
   // Drift the ring alignment used at snapshot time; estimates must use this, not current drift.
   std::int64_t drift_ms_at_capture = 0;
+  // Shifted window from the timing search; its decodes are not reported
+  bool timing_trial = false;
+  // Holds the primary submode's window
+  bool counts_for_drought = false;
 };
 
 struct SpectrumState {

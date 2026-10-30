@@ -8,6 +8,7 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -18,6 +19,7 @@ import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import androidx.navigation.fragment.NavHostFragment
 import androidx.navigation.ui.setupWithNavController
 import androidx.preference.PreferenceManager
+import com.google.android.material.bottomnavigation.BottomNavigationView
 import com.google.android.material.navigation.NavigationBarView
 import com.google.android.material.snackbar.Snackbar
 import com.js8call.example.model.EngineState
@@ -31,6 +33,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var bottomNav: NavigationBarView
     private var onMonitorTab = true
+    private var timingSnackbar: Snackbar? = null
     private lateinit var decodeViewModel: DecodeViewModel
     private lateinit var monitorViewModel: MonitorViewModel
     private var spectrumBroadcastCount: Long = 0
@@ -146,6 +149,28 @@ class MainActivity : AppCompatActivity() {
                     val driftMs = intent.getLongExtra(JS8EngineService.EXTRA_TIME_DRIFT_MS, 0L)
                     monitorViewModel.updateTimeDrift(driftMs)
                 }
+                JS8EngineService.ACTION_TIMING_SUGGESTION -> {
+                    val kind = intent.getIntExtra(JS8EngineService.EXTRA_TIMING_KIND, 0)
+                    monitorViewModel.updateTimingSuggestion(
+                        if (kind == JS8EngineService.TIMING_IDLE) {
+                            null
+                        } else {
+                            MonitorViewModel.TimingSuggestion(
+                                kind = kind,
+                                driftMs = intent.getLongExtra(JS8EngineService.EXTRA_TIME_DRIFT_MS, 0L),
+                                step = intent.getIntExtra(JS8EngineService.EXTRA_TIMING_STEP, 0),
+                                steps = intent.getIntExtra(JS8EngineService.EXTRA_TIMING_STEPS, 0),
+                                periodMs = intent.getIntExtra(
+                                    JS8EngineService.EXTRA_TIMING_PERIOD_MS, 15_000
+                                ),
+                                eventAt = intent.getLongExtra(
+                                    JS8EngineService.EXTRA_TIMING_EVENT_AT,
+                                    SystemClock.elapsedRealtime()
+                                )
+                            )
+                        }
+                    )
+                }
                 JS8EngineService.ACTION_RIG_STATUS -> {
                     val connected = intent.getBooleanExtra(JS8EngineService.EXTRA_RIG_CONNECTED, false)
                     monitorViewModel.updateRigConnected(connected)
@@ -181,6 +206,7 @@ class MainActivity : AppCompatActivity() {
         bottomNav.setupWithNavController(navController)
         navController.addOnDestinationChangedListener { _, destination, _ ->
             onMonitorTab = destination.id == R.id.navigation_monitor
+            renderTimingSurface()
             if (destination.id == R.id.navigation_conversation) {
                 bottomNav.menu.findItem(R.id.navigation_messages).isChecked = true
             }
@@ -188,6 +214,7 @@ class MainActivity : AppCompatActivity() {
 
         decodeViewModel = ViewModelProvider(this)[DecodeViewModel::class.java]
         monitorViewModel = ViewModelProvider(this)[MonitorViewModel::class.java]
+        monitorViewModel.timingSuggestion.observe(this) { renderTimingSurface() }
         messagesViewModel = ViewModelProvider(this)[MessagesViewModel::class.java]
         transmitViewModel = ViewModelProvider(this)[TransmitViewModel::class.java]
         decodeViewModel.loadPersistedDecodesIfEnabled()
@@ -232,6 +259,7 @@ class MainActivity : AppCompatActivity() {
             addAction(JS8EngineService.ACTION_AUDIO_DEVICE_LOST)
             addAction(JS8EngineService.ACTION_RADIO_FREQUENCY)
             addAction(JS8EngineService.ACTION_TIME_DRIFT)
+            addAction(JS8EngineService.ACTION_TIMING_SUGGESTION)
             addAction(JS8EngineService.ACTION_RIG_STATUS)
         }
         LocalBroadcastManager.getInstance(this)
@@ -250,6 +278,42 @@ class MainActivity : AppCompatActivity() {
             stopEngineService()
         }
         super.onStop()
+    }
+
+    /** Badge on Monitor while a timing fix is pending; snackbar only off Monitor. */
+    private fun renderTimingSurface() {
+        // The destination listener fires before the ViewModels exist
+        if (!::monitorViewModel.isInitialized) return
+        val suggestion = monitorViewModel.timingSuggestion.value
+            ?.takeIf { it.kind == JS8EngineService.TIMING_FOUND }
+
+        if (suggestion != null) {
+            bottomNav.getOrCreateBadge(R.id.navigation_monitor)
+        } else {
+            bottomNav.removeBadge(R.id.navigation_monitor)
+        }
+
+        if (suggestion == null || onMonitorTab) {
+            timingSnackbar?.dismiss()
+            timingSnackbar = null
+            return
+        }
+        val text = suggestion.foundText(this)
+        timingSnackbar?.takeIf { it.isShown }?.let {
+            it.setText(text)
+            return
+        }
+        timingSnackbar = Snackbar.make(
+            findViewById(android.R.id.content),
+            text,
+            Snackbar.LENGTH_INDEFINITE
+        ).apply {
+            anchorView = bottomNav as? BottomNavigationView
+            setAction(R.string.monitor_timing_show) {
+                bottomNav.selectedItemId = R.id.navigation_monitor
+            }
+            show()
+        }
     }
 
     /**
